@@ -11,10 +11,10 @@ class Particle:
 
 class ParticleFilter:
 
-    def __init__(self, world_dim, num_particles=5000, dist_sigma=0.05, theta_sigma=0.05, sense_sigma=5):
+    def __init__(self, world_dim, num_particles=5000, motion_sigma=0.05, theta_sigma=0.05, sense_sigma=5):
         self.world_dim = world_dim
         self.num_particles = num_particles
-        self.dist_sigma = dist_sigma
+        self.motion_sigma = motion_sigma
         self.theta_sigma = theta_sigma
         self.sense_sigma = sense_sigma
         self.particles = self.generate_random_particles()
@@ -28,16 +28,16 @@ class ParticleFilter:
             particles.append(Particle(x, y, theta))
         return particles
         
-    def motion_update(self, delta_dist, delta_theta):
+    def motion_update(self, motion, theta):
         particles = []
-        delta_dist += np.random.normal(0, self.dist_sigma)
-        delta_theta += np.random.normal(0, self.theta_sigma)
+        motion += np.random.normal(0, self.motion_sigma)
+        theta += np.random.normal(0, self.theta_sigma)
         for p in self.particles:
-            theta = p.theta + delta_theta
+            theta = p.theta + theta
             theta %= 2 * np.pi
-            x = p.x + delta_dist * np.cos(theta)
+            x = p.x + motion * np.cos(theta)
             x %= self.world_dim[0]
-            y = p.y + delta_dist * np.sin(theta)
+            y = p.y + motion * np.sin(theta)
             y %= self.world_dim[1]
             particles.append(Particle(x, y, theta))
         self.particles = particles
@@ -56,23 +56,23 @@ class ParticleFilter:
 
 class Robot:
 
-    def __init__(self, world_dim, dist_sigma=0, theta_sigma=0, sense_sigma=0):
+    def __init__(self, world_dim, motion_sigma=0, theta_sigma=0, sense_sigma=0):
         self.world_dim = world_dim
         self.x = np.random.random() * world_dim[0]
         self.y = np.random.random() * world_dim[1]
         self.theta = np.random.random() * 2 * np.pi
-        self.dist_sigma = dist_sigma
+        self.motion_sigma = motion_sigma
         self.theta_sigma = theta_sigma
         self.sense_sigma = sense_sigma
 
-    def move(self, delta_dist, delta_theta):
-        delta_dist += np.random.normal(0, self.dist_sigma)
-        delta_theta += np.random.normal(0, self.theta_sigma)
-        self.theta += delta_theta
+    def move(self, motion, theta):
+        motion += np.random.normal(0, self.motion_sigma)
+        theta += np.random.normal(0, self.theta_sigma)
+        self.theta += theta
         self.theta %= 2 * np.pi
-        self.x += delta_dist * np.cos(self.theta)
+        self.x += motion * np.cos(self.theta)
         self.x %= self.world_dim[0]
-        self.y += delta_dist * np.sin(self.theta)
+        self.y += motion * np.sin(self.theta)
         self.y %= self.world_dim[1]
 
     def sense(self, landmarks):
@@ -82,6 +82,11 @@ class Robot:
             dist += np.random.normal(0, self.sense_sigma)
             Z.append(dist)
         return Z
+
+    def random_action(self):
+        dist = np.random.random() * 10
+        theta = np.random.random() * np.pi
+        return dist, theta
 
 
 def render(world_dim, robot, particle_filter, landmarks):
@@ -96,13 +101,12 @@ def render(world_dim, robot, particle_filter, landmarks):
 
 def simulate(world_dim, robot, particle_filter, landmarks):
     render(world_dim, robot, pf, landmarks)
-    dist = np.random.random() * 10
-    theta = np.random.random() * np.pi
-    robot.move(dist, theta)
+    action = robot.random_action()
+    robot.move(*action)
     Z = robot.sense(landmarks)
-    particle_filter.motion_update(dist, theta)
+    particle_filter.motion_update(*action)
     particle_filter.measurement_update(Z, landmarks)
-    
+
 
 num_iterations = 10
 world_dim = (100, 100)
