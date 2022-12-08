@@ -2,102 +2,118 @@ import numpy as np
 from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
 
+
 class KalmanFilter:
 
-    def __init__(self, F, Q, H, R):
+    def __init__(self, F, Q, H, R, dt=1):
         self.F = F
         self.Q = Q
         self.H = H
         self.R = R
-        self.I = np.eye(2)
+        self.dt = dt
+        self.I = np.eye(3)
+
+    def B(self, x):
+        gamma = x[-1, 0]
+        return np.array([
+            [np.cos(gamma) * self.dt, 0],
+            [np.sin(gamma) * self.dt, 0],
+            [0, self.dt]
+        ])
 
     def update(self, x, P, Z):
-        y = Z - np.dot(self.H, x)
-        S = np.dot(np.dot(self.H, P), np.transpose(self.H)) + self.R
-        K = np.dot(np.dot(P, np.transpose(self.H)), np.linalg.inv(S))
-        x = x + np.dot(K, y)
-        P = np.dot((self.I - np.dot(K, self.H)), P)
+        y = Z - self.H @ x
+        S = self.H @ P @ self.H.T + self.R
+        K = P @ self.H.T @ np.linalg.pinv(S)
+        x = x + K @ y
+        P = (self.I - K @ self.H) @ P
         return x, P
 
     def predict(self, x, P, u):
-        x = self.F @ x + u
+        x = self.F @ x + self.B(x) @ u
         P = self.F @ P @ self.F.T + self.Q
         return x, P
 
-    def visualize(self, world_dim, mean, cov):
-        mean = mean.reshape(-1)
-        rv = multivariate_normal(mean, cov)
-        x, y = np.mgrid[0:world_dim[0]:.5, 0:world_dim[1]:.5]
-        pos = np.dstack((x, y))
-        plt.contourf(x, y, rv.pdf(pos))
-        plt.pause(0.05)
-        plt.cla()
 
 class Robot:
 
-    def __init__(self, world_dim, motion_sigma=0, measurement_sigma=0):
-        self.world_dim = world_dim
-        self.x = np.random.random() * world_dim[0]
-        self.y = np.random.random() * world_dim[1]
-        self.theta = np.random.random() * 2 * np.pi
+    def __init__(self, x, motion_sigma, measurement_sigma, dt=1):
+        self.x = x.copy()
         self.motion_sigma = motion_sigma
         self.measurement_sigma = measurement_sigma
+        self.dt = dt
 
-    def move(self, motion, rotation):
-        self.theta += rotation
-        self.theta %= 2 * np.pi
-        dx = np.cos(self.theta) * motion + np.random.normal(0, self.motion_sigma)
-        dy = np.sin(self.theta) * motion + np.random.normal(0, self.motion_sigma)
-        self.x += dx
-        self.y += dy
+    @property
+    def B(self):
+        gamma = self.x[-1, 0]
+        return np.array([
+            [np.cos(gamma) * self.dt, 0],
+            [np.sin(gamma) * self.dt, 0],
+            [0, self.dt]
+        ])
+
+    @property
+    def motion_noise(self):
+        return np.array([[np.random.normal(0, sigma) for sigma in self.motion_sigma]]).T
+
+    @property
+    def measurement_noise(self):
+        return np.array([[np.random.normal(0, sigma) for sigma in self.measurement_sigma]]).T
+
+    def move(self, u):
+        self.x += self.B @ u
+        self.x += self.motion_noise
 
     def sense(self):
-        x = self.x + np.random.normal(0, self.measurement_sigma)
-        y = self.y + np.random.normal(0, self.measurement_sigma)
-        return np.array([[x, y]]).T
+        Z = self.x + self.measurement_noise
+        return Z
 
     def random_action(self):
-        motion = np.random.random() * 25
-        rotation = np.random.random() * np.pi
-        return motion, rotation
-
-    def polar2cartesian(self, r, theta):
-        theta += self.theta
-        dx = np.cos(theta) * r
-        dy = np.sin(theta) * r
-        return dx, dy
+        v = np.random.random() * 5
+        w = np.random.random() * np.pi
+        return np.array([[v, 0]]).T
 
 
-world_dim = (100, 100)
-motion_sigma = 2
-measurement_sigma = 10
-num_iterations = 100
+def visualize(robot, x, P, time=0.5):
+    rv = multivariate_normal(x.reshape(-1)[:2], P[:2, :2])
+    i, j = np.mgrid[-100:100:1, -100:100:1]
+    points = np.dstack((i, j))
+    plt.contourf(i, j, rv.pdf(points))
 
-robot = Robot(world_dim, motion_sigma, measurement_sigma)
+    pos = robot.x.reshape(-1)
+    plt.scatter([pos[0]], [pos[1]], color='b')
+    plt.pause(time)
+    plt.cla()
 
-F = np.eye(2)
-Q = np.eye(2) * motion_sigma
-H = np.eye(2)
-R = np.eye(2) * measurement_sigma
+dt = 1
+motion_sigma = [10, 10, 0.2]
+measurement_sigma = [3, 3, 0.1]
 
-kf = KalmanFilter(F, Q, H, R)
+x = np.array([[0., 0., 0.]]).T
+P = np.diag([1000., 1000., 1000.])
 
-x = np.array([[0, 0]]).T
-P = np.array([[1000, 0], [0, 1000]])
+robot = Robot(x, motion_sigma, measurement_sigma, dt=dt)
+
+F = np.eye(3)
+Q = np.diag(motion_sigma)
+H = np.eye(3)
+R = np.diag(measurement_sigma)
+
+kf = KalmanFilter(F, Q, H, R, dt=dt)
 
 plt.show(block=False)
 
-for _ in range(num_iterations):
-
-    kf.visualize(world_dim, x, P)
+num_iterations = 10
+for i in range(num_iterations):
 
     Z = robot.sense()
     x, P = kf.update(x, P, Z)
-    r, theta = robot.random_action()
-    robot.move(r, theta)
-    cartesian = robot.polar2cartesian(r, theta)
-    u = np.array([cartesian]).T
+    
+    u = robot.random_action()
+    robot.move(u)
     x, P = kf.predict(x, P, u)
+
+    visualize(robot, x, P, time=0.5)
 
 plt.close()
 
